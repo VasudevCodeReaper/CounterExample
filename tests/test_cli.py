@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 
 from counterexample.cli import main
 
@@ -85,6 +87,84 @@ def test_install_skill_and_generators(tmp_path, capsys):
         assert text.startswith("---\nname: counterexample")
     assert main(["generators"]) == 0
     assert "generator_spec reference" in capsys.readouterr().out
+
+
+def test_init_configures_major_agent_hosts_without_overwriting_existing_config(tmp_path, capsys):
+    (tmp_path / "AGENTS.md").write_text("# Existing project policy\n", encoding="utf-8")
+    (tmp_path / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"other": {"command": "other-mcp"}}}), encoding="utf-8"
+    )
+
+    assert main(["init", "--dir", str(tmp_path)]) == 0
+    output = capsys.readouterr().out
+    assert "Counterexample is ready" in output
+
+    for sub in (
+        ".agents/skills/counterexample/SKILL.md",
+        ".claude/skills/counterexample/SKILL.md",
+        ".github/skills/counterexample/SKILL.md",
+        ".cursor/rules/counterexample.mdc",
+        ".github/agents/counterexample.agent.md",
+        ".cline/skills/counterexample/SKILL.md",
+        ".cline/rules/counterexample.md",
+    ):
+        assert (tmp_path / sub).is_file(), sub
+
+    agents = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+    assert agents.startswith("# Existing project policy")
+    assert agents.count("<!-- counterexample:begin -->") == 1
+    assert (tmp_path / "CLAUDE.md").is_file()
+    assert (tmp_path / "GEMINI.md").is_file()
+    assert (tmp_path / ".github/copilot-instructions.md").is_file()
+
+    generic_mcp = json.loads((tmp_path / ".mcp.json").read_text(encoding="utf-8"))
+    assert {"other", "counterexample"} <= set(generic_mcp["mcpServers"])
+    assert json.loads((tmp_path / ".cursor/mcp.json").read_text(encoding="utf-8"))["mcpServers"]["counterexample"]
+    assert json.loads((tmp_path / ".gemini/settings.json").read_text(encoding="utf-8"))["mcpServers"]["counterexample"]
+    assert json.loads((tmp_path / ".vscode/mcp.json").read_text(encoding="utf-8"))["servers"]["counterexample"]["type"] == "stdio"
+    assert json.loads((tmp_path / ".continue/mcpServers/counterexample.json").read_text(encoding="utf-8"))["mcpServers"]["counterexample"]
+    codex_config = (tmp_path / ".codex/config.toml").read_text(encoding="utf-8")
+    assert "[mcp_servers.counterexample]" in codex_config
+    assert "# counterexample:begin" in codex_config
+    assert "<!-- counterexample:begin -->" not in codex_config
+
+    # The bootstrap is safe to run again and does not duplicate its policy block.
+    assert main(["init", "--dir", str(tmp_path)]) == 0
+    assert (tmp_path / "AGENTS.md").read_text(encoding="utf-8").count("<!-- counterexample:begin -->") == 1
+
+
+def test_init_only_touches_user_agent_configs_when_explicit(tmp_path, monkeypatch, capsys):
+    from counterexample import bootstrap
+
+    windsurf_config = tmp_path / "windsurf" / "mcp_config.json"
+    cline_config = tmp_path / "cline" / "cline_mcp_settings.json"
+    monkeypatch.setattr(bootstrap, "_windsurf_config_path", lambda: windsurf_config)
+    monkeypatch.setattr(bootstrap, "_cline_config_path", lambda: cline_config)
+
+    assert main(["init", "--dir", str(tmp_path), "--target", "windsurf"]) == 0
+    assert not windsurf_config.exists()
+    assert "user-level MCP config" in capsys.readouterr().out
+
+    assert main(["init", "--dir", str(tmp_path), "--target", "windsurf", "--configure-windsurf"]) == 0
+    assert json.loads(windsurf_config.read_text(encoding="utf-8"))["mcpServers"]["counterexample"]
+
+    assert main(["init", "--dir", str(tmp_path), "--target", "cline"]) == 0
+    assert not cline_config.exists()
+    assert "user-level MCP config" in capsys.readouterr().out
+
+    assert main(["init", "--dir", str(tmp_path), "--target", "cline", "--configure-cline"]) == 0
+    assert json.loads(cline_config.read_text(encoding="utf-8"))["mcpServers"]["counterexample"]
+
+
+def test_module_entrypoint_displays_cli_help():
+    result = subprocess.run(
+        [sys.executable, "-m", "counterexample", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "init" in result.stdout
 
 
 def test_profile_cli(tmp_path, capsys):

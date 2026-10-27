@@ -6,6 +6,7 @@
     counterexample profile --candidate fast.py --expected "O(N log N)"
     counterexample lock payload.json tests/test_regressions.py --framework pytest
     counterexample serve --transport streamable-http --port 8000
+    counterexample init --dir . --target all
     counterexample install-skill --target claude
 
 Exit codes: 0 = VERIFIED / OK / LOCKED, 1 = FALSIFIED / FLAGGED, 2 = error.
@@ -197,6 +198,31 @@ def _cmd_install_skill(a: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_init(a: argparse.Namespace) -> int:
+    """Set up model-host integrations without clobbering existing project config."""
+
+    from counterexample.bootstrap import initialize_project
+
+    root = Path(a.dir).resolve()
+    try:
+        actions = initialize_project(
+            root,
+            target=a.target,
+            configure_windsurf=a.configure_windsurf,
+            configure_cline=a.configure_cline,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    for action in actions:
+        print(action)
+    print(
+        "\nCounterexample is ready. In an agent chat, ask: "
+        "'Use the Counterexample workflow to audit this project, fix confirmed failures, and add regression tests.'"
+    )
+    return 0
+
+
 def _cmd_generators(a: argparse.Namespace) -> int:
     from counterexample.generators import GENERATOR_REFERENCE
 
@@ -294,6 +320,26 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--target", choices=["claude", "agents", "both"], default="both")
     s.add_argument("--dir", default=".", help="repository root (default: current directory)")
     s.set_defaults(func=_cmd_install_skill)
+
+    s = sub.add_parser("init", help="configure Counterexample for major coding-agent hosts in this project")
+    s.add_argument("--dir", default=".", help="existing project root (default: current directory)")
+    s.add_argument(
+        "--target",
+        choices=["all", "codex", "claude", "cursor", "gemini", "copilot", "windsurf", "cline", "continue"],
+        default="all",
+        help="agent host to configure (default: all project-local integrations)",
+    )
+    s.add_argument(
+        "--configure-windsurf",
+        action="store_true",
+        help="also update Windsurf's user-level MCP config; this is intentionally opt-in",
+    )
+    s.add_argument(
+        "--configure-cline",
+        action="store_true",
+        help="also update Cline CLI's user-level MCP config; this is intentionally opt-in",
+    )
+    s.set_defaults(func=_cmd_init)
 
     s = sub.add_parser("generators", help="print the generator_spec reference")
     s.set_defaults(func=_cmd_generators)

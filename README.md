@@ -148,14 +148,56 @@ Optional extras: `pip install -e ".[fastapi]"` for endpoint testing, `pip instal
 the test suite. C++ support needs `g++` or `clang++` on `PATH` (or set `$CXX`; `pip install ziglang`
 works as a zero-setup fallback on any OS).
 
-### 2. Portable skill setup
+### 2. One-command agent setup
 
-Copy `SKILL.md` into your repository's `.agents/skills/counterexample/` or `.claude/skills/`
-directory so your agent knows when to trigger falsification loops:
+From the root of the project you want an agent to work on, run:
 
 ```bash
-counterexample install-skill --target both --dir /path/to/your/repo
+counterexample init --dir . --target all
 ```
+
+If Counterexample is not installed yet, this single command installs it from this repository and
+configures the current project (in PowerShell 7+, Bash, Zsh, or CMD):
+
+```bash
+python -m pip install "git+https://github.com/VasudevCodeReaper/CounterExample.git" && python -m counterexample init --dir . --target all --configure-windsurf --configure-cline
+```
+
+It is safe to repeat: existing instruction files and MCP servers are preserved, while the
+Counterexample-managed block is refreshed. The bootstrap configures the major coding-agent hosts
+in the places they discover project-local guidance:
+
+| Host | Installed project assets |
+| --- | --- |
+| Codex / OpenAI-compatible agents | `.agents/skills/counterexample/`, `AGENTS.md`, `.codex/config.toml` |
+| Claude Code | `.claude/skills/counterexample/`, `CLAUDE.md`, `.mcp.json` |
+| Cursor | `AGENTS.md`, `.cursor/rules/counterexample.mdc`, `.cursor/mcp.json` |
+| Gemini CLI | `GEMINI.md`, `.gemini/settings.json` |
+| GitHub Copilot / VS Code | `.github/skills/counterexample/`, `.github/copilot-instructions.md`, selectable agent profile, `.vscode/mcp.json` |
+| Cline | `.cline/skills/counterexample/`, `.cline/rules/counterexample.md` |
+| Continue | `.continue/mcpServers/counterexample.json` |
+
+Windsurf keeps MCP configuration in a user-level file rather than in the project. Opt in explicitly
+when you want the local account configured too:
+
+```bash
+counterexample init --dir . --target all --configure-windsurf --configure-cline
+```
+
+After setup, paste this into an agent chat:
+
+> Use the installed Counterexample workflow to audit this project, fix confirmed failures, add
+> regression tests, and report the oracle/property evidence plus any limits that remain.
+
+The tool protocol is model-neutral: any host that supports MCP can expose the same Counterexample
+tools to whichever model it runs—including hosted or local OpenAI, Claude, Gemini, Qwen, DeepSeek,
+Llama, Mistral, Grok, and OpenRouter models when their agent host supports tool use. A chat-only
+model without filesystem/shell access or an MCP host can still follow the generated instructions,
+but it cannot execute the local arena itself. The `counterexample` package must be installed in the
+Python environment used by the configured host.
+
+For the older skill-only setup, `counterexample install-skill --target both --dir /path/to/repo`
+remains available.
 
 ### 3. Try it from the command line
 
