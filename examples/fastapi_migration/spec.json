@@ -1,0 +1,4 @@
+{"type": "http_request", "method": "POST", "path": "/total",
+ "json": {"type": "record", "fields": {
+   "prices": {"type": "list", "elements": {"type": "int", "min": 0, "max": 100}, "max_len": 4},
+   "coupon": {"type": "choice", "values": ["", "HALF", "half"]}}}}

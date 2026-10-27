@@ -1,0 +1,68 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          - os: windows-latest
+            python: "3.12"
+          - os: macos-latest
+            python: "3.12"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Test
+        run: python -m pytest -q
+      - name: Examples
+        run: python examples/run_examples.py
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t counterexample:ci .
+      - name: Smoke test the HTTP server
+        run: |
+          docker run -d --name cx -p 8000:8000 -e COUNTEREXAMPLE_API_TOKEN=ci-token counterexample:ci
+          for i in $(seq 1 30); do
+            if curl -sf -o /dev/null -X POST http://localhost:8000/mcp \
+                 -H 'authorization: Bearer ci-token'                  -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
+                 -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}'; then
+              echo "server up"; exit 0
+            fi
+            sleep 1
+          done
+          docker logs cx; exit 1
+      - name: Rejects unauthenticated requests
+        run: test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8000/mcp -d '{}')" = "401"
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install build
+      - run: python -m build
+      - name: Wheel bundles SKILL.md
+        run: python -c "import zipfile,glob; z=zipfile.ZipFile(glob.glob('dist/*.whl')[0]); assert 'counterexample/_bundled/SKILL.md' in z.namelist()"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

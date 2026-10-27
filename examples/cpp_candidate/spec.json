@@ -1,0 +1,1 @@
+{"type": "list", "elements": {"type": "int", "min": -20, "max": 20}, "max_len": 40}

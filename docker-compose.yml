@@ -1,0 +1,24 @@
+services:
+  counterexample:
+    build: .
+    image: counterexample:latest
+    ports:
+      - "8000:8000"
+    environment:
+      # Required: the server executes submitted code. Clients send "Authorization: Bearer <token>".
+      COUNTEREXAMPLE_API_TOKEN: ${COUNTEREXAMPLE_API_TOKEN:?set COUNTEREXAMPLE_API_TOKEN to a long random secret}
+      SANDBOX_TIMEOUT_MS: "2000"
+      DEFAULT_ARENA_RUNS: "5000"
+      COUNTEREXAMPLE_MAX_WORKERS: "4"
+      SANDBOX_MEMORY_MB: "1024"
+    # Hardening: code under test runs inside this container.
+    read_only: true
+    tmpfs:
+      - /tmp:exec,mode=1777,size=1g
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    mem_limit: 4g
+    restart: unless-stopped

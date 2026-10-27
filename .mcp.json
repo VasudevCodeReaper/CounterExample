@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "counterexample": {
+      "command": "python",
+      "args": ["-m", "counterexample.mcp_server"],
+      "env": {
+        "SANDBOX_TIMEOUT_MS": "2000",
+        "DEFAULT_ARENA_RUNS": "5000"
+      }
+    }
+  }
+}

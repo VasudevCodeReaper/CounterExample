@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "counterexample"
+version = "0.1.0"
+description = "A neuro-symbolic falsification & self-play engine for coding agents (MCP server + Agent Skill)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Counterexample contributors" }]
+keywords = [
+    "mcp",
+    "agent-skill",
+    "differential-testing",
+    "property-based-testing",
+    "delta-debugging",
+    "fuzzing",
+    "llm",
+    "claude-code",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: C++",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = ["mcp>=1.2"]
+
+[project.optional-dependencies]
+fastapi = ["fastapi>=0.100", "httpx>=0.24"]
+dev = ["pytest>=7.4", "fastapi>=0.100", "httpx>=0.24"]
+
+[project.scripts]
+counterexample = "counterexample.cli:main"
+counterexample-mcp = "counterexample.mcp_server:main"
+
+[project.urls]
+Homepage = "https://github.com/VasudevCodeReaper/CounterExample"
+Issues = "https://github.com/VasudevCodeReaper/CounterExample/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["counterexample"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"SKILL.md" = "counterexample/_bundled/SKILL.md"
+
+[tool.hatch.build.targets.sdist]
+include = ["counterexample", "tests", "examples", "SKILL.md", "README.md", "LICENSE", "CONTRIBUTING.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "cpp: requires a C++17 compiler (g++/clang++)",
+    "fastapi: requires fastapi + httpx",
+    "git: requires the git executable",
+]

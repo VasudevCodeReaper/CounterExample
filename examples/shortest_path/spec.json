@@ -1,0 +1,2 @@
+{"args": [{"type": "dag", "nodes": [1, 8], "weighted": true, "weights": {"type": "int", "min": -5, "max": 10}, "spread": true},
+          {"type": "const", "value": 0}]}
