@@ -74,3 +74,23 @@ def test_overlapping_intervals_translate_to_origin():
     assert len(ivs) == 2
     assert min(a for a, _ in ivs) == 0
     assert max(b for _, b in ivs) <= 3
+
+
+def test_500_element_failure_shrinks_to_the_minimal_pattern():
+    gen = CaseGenerator({"type": "list", "elements": "int(-9,9)", "max_len": 500})
+    case = {"args": [[0] * 249 + [-1] + [0] * 250], "kwargs": {}}
+
+    def has_pattern(candidate):
+        (values,), _ = gen.materialize(candidate)
+        return any(values[i : i + 3] == [0, -1, 0] for i in range(len(values) - 2))
+
+    def evaluate(batch):
+        for index, candidate in enumerate(batch):
+            if has_pattern(candidate):
+                return index, True
+        return None
+
+    result = DeltaShrinker(gen, evaluate, max_evals=20_000, budget_s=30).shrink(case, True)
+    assert gen.materialize(result.case)[0] == [[0, -1, 0]]
+    assert result.original_size == 500
+    assert result.shrunk_size == 3

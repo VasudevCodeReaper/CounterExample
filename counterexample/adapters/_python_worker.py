@@ -33,6 +33,13 @@ from fractions import Fraction
 MAX_DEPTH = 200
 MAX_ITER_ITEMS = 1_000_000
 STDOUT_LIMIT = 2000
+WORKER_STACK_SIZE = 16 * 1024 * 1024
+
+
+async def _async_noop():
+    """Provide a baseline for scheduling one coroutine on the worker loop."""
+
+    return None
 
 # --------------------------------------------------------------------------- #
 # Private copy of counterexample.codec.encode/decode (keep in sync).
@@ -180,17 +187,14 @@ def _invoke(target, args, kwargs):
     """Call a target and resolve coroutine or other awaitable results.
 
     ``AsyncFunctionDef`` entrypoints are valid Python entrypoints, but invoking
-    one produces a coroutine object.  Resolving it inside the isolated worker
-    makes synchronous and asynchronous implementations comparable by their
-    actual return values.
+    one produces a coroutine object.  The target owns one reusable event loop,
+    so scheduling setup is not repeated for every arena sample.  Its calibrated
+    scheduling cost is returned separately from the implementation timing.
     """
     result = target.fn(*args, **kwargs)
     if inspect.isawaitable(result):
-        async def resolve():
-            return await result
-
-        return asyncio.run(resolve())
-    return result
+        return target.resolve_awaitable(result), target.await_overhead_ns
+    return result, 0
 
 
 def _exc_info(exc, code_name):
@@ -213,6 +217,8 @@ class Target:
         self.namespace = {"__name__": "__counterexample__", "__builtins__": __builtins__}
         self.client = None
         self.base_url = None
+        self._async_loop = None
+        self.await_overhead_ns = 0
         code = setup["code"]
         self.source = code
         if self.mode == "fastapi" and code.strip().startswith(("http://", "https://")):
@@ -232,6 +238,44 @@ class Target:
             self._setup_fastapi(setup.get("entrypoint"))
         else:
             self.fn, self.name = self._resolve(setup.get("entrypoint"), setup.get("role", "candidate"))
+            if inspect.iscoroutinefunction(self.fn) or getattr(self.fn, "_counterexample_async", False):
+                self._prepare_async_loop()
+
+    def _prepare_async_loop(self):
+        if self._async_loop is not None:
+            return
+        loop = asyncio.new_event_loop()
+        samples = []
+        for _ in range(7):
+            t0 = time.perf_counter_ns()
+            loop.run_until_complete(_async_noop())
+            samples.append(time.perf_counter_ns() - t0)
+        samples.sort()
+        self._async_loop = loop
+        self.await_overhead_ns = samples[len(samples) // 2]
+
+    def resolve_awaitable(self, awaitable):
+        self._prepare_async_loop()
+        assert self._async_loop is not None
+        return self._async_loop.run_until_complete(awaitable)
+
+    def close(self):
+        if self.client is not None:
+            try:
+                self.client.close()
+            except Exception:
+                pass
+        if self._async_loop is None:
+            return
+        try:
+            pending = asyncio.all_tasks(self._async_loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                self._async_loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        finally:
+            self._async_loop.close()
+            self._async_loop = None
 
     # -- entrypoint resolution -------------------------------------------- #
     def _resolve(self, entry, role):
@@ -286,6 +330,7 @@ class Target:
             return getattr(cls(), meth)(*args, **kwargs)
 
         call.__name__ = meth
+        call._counterexample_async = inspect.iscoroutinefunction(getattr(cls, meth))
         return call
 
     # -- fastapi ----------------------------------------------------------- #
@@ -359,8 +404,9 @@ def op_call(target, msg):
     sys.stdout = sink
     t0 = time.perf_counter_ns()
     try:
-        result = _materialize(_invoke(target, args, kwargs))
-        ns = time.perf_counter_ns() - t0
+        result, overhead_ns = _invoke(target, args, kwargs)
+        result = _materialize(result)
+        ns = max(1, time.perf_counter_ns() - t0 - overhead_ns)
     except BaseException as exc:  # noqa: BLE001 - user code may raise anything
         ns = time.perf_counter_ns() - t0
         sys.stdout = old
@@ -403,8 +449,9 @@ def op_profile(target, msg):
             while True:
                 a, k = copy.deepcopy(args), copy.deepcopy(kwargs)
                 t0 = time.perf_counter_ns()
-                _materialize(_invoke(target, a, k))
-                total += time.perf_counter_ns() - t0
+                result, overhead_ns = _invoke(target, a, k)
+                _materialize(result)
+                total += max(1, time.perf_counter_ns() - t0 - overhead_ns)
                 loops += 1
                 if total >= min_ns or loops >= 1000 or time.perf_counter_ns() - start > budget_ns:
                     break
@@ -416,7 +463,8 @@ def op_profile(target, msg):
             a, k = copy.deepcopy(args), copy.deepcopy(kwargs)
             tracemalloc.start()
             try:
-                _materialize(_invoke(target, a, k))
+                result, _ = _invoke(target, a, k)
+                _materialize(result)
                 _, peak = tracemalloc.get_traced_memory()
             finally:
                 tracemalloc.stop()
@@ -490,7 +538,8 @@ def op_trace(target, msg):
     error = None
     sys.settrace(tracer)
     try:
-        result = _materialize(_invoke(target, args, kwargs))
+        result, _ = _invoke(target, args, kwargs)
+        result = _materialize(result)
     except BaseException as exc:  # noqa: BLE001
         if isinstance(exc, KeyboardInterrupt):
             raise
@@ -530,25 +579,47 @@ def main():
         return
     proto.send({"ok": True, "entry": target.name})
     ops = {"call": op_call, "profile": op_profile, "trace": op_trace}
-    while True:
-        msg = proto.read()
-        if msg is None or msg.get("op") == "exit":
-            return
-        handler = ops.get(msg.get("op"))
-        if handler is None:
-            proto.send({"id": msg.get("id"), "ok": False, "exc": "ProtocolError", "msg": f"unknown op {msg.get('op')!r}"})
-            continue
-        proto.send(handler(target, msg))
+    try:
+        while True:
+            msg = proto.read()
+            if msg is None or msg.get("op") == "exit":
+                return
+            handler = ops.get(msg.get("op"))
+            if handler is None:
+                proto.send({"id": msg.get("id"), "ok": False, "exc": "ProtocolError", "msg": f"unknown op {msg.get('op')!r}"})
+                continue
+            proto.send(handler(target, msg))
+    finally:
+        target.close()
 
 
 if __name__ == "__main__":
-    # Deep recursion in user code needs a bigger C stack than the main thread has.
+    # Give the protocol worker enough C stack for deeply recursive user code,
+    # then restore the process default before it can create framework threads.
+    # In particular, FastAPI/TestClient must not inherit an enormous stack for
+    # every request thread under the worker's memory limit.
+    start_gate = threading.Event()
+
+    def run_worker():
+        start_gate.wait()
+        main()
+
+    previous_stack_size = None
     try:
-        threading.stack_size(256 * 1024 * 1024)
+        previous_stack_size = threading.stack_size()
+        threading.stack_size(WORKER_STACK_SIZE)
     except (ValueError, RuntimeError):
         pass
-    worker = threading.Thread(target=main, name="counterexample-worker")
-    worker.start()
+    worker = threading.Thread(target=run_worker, name="counterexample-worker")
+    try:
+        worker.start()
+    finally:
+        if previous_stack_size is not None:
+            try:
+                threading.stack_size(previous_stack_size)
+            except (ValueError, RuntimeError):
+                pass
+        start_gate.set()
     worker.join()
     sys.stdout.flush()
     os._exit(0)

@@ -168,3 +168,41 @@ def test_async_entrypoints_are_awaited():
     # the workers awaited the coroutines instead of comparing their reprs.
     assert r["oracle_output"] == "0"
     assert r["candidate_output"] == "1"
+
+
+def test_async_entrypoint_reuses_worker_event_loop_for_timing():
+    oracle = "def f(x: int) -> int:\n    return x\n"
+    candidate = '''
+import asyncio
+
+loop = None
+
+async def f(x: int) -> int:
+    global loop
+    current = asyncio.get_running_loop()
+    if loop is None:
+        loop = current
+    elif loop is not current:
+        return x + 1
+    return x
+'''
+    r = run_differential_arena(oracle, candidate, "int(0,20)", num_runs=20)
+
+    assert r["status"] == "VERIFIED", r
+    assert r["timing"]["speedup"] > 0.1
+
+
+def test_very_slow_candidate_reports_speedup_without_crashing():
+    oracle = "def f(x: int) -> int:\n    return x\n"
+    candidate = '''
+def f(x: int) -> int:
+    total = 0
+    for i in range(500_000):
+        total += i
+    return x
+'''
+    r = run_differential_arena(oracle, candidate, "int(0,0)", num_runs=1)
+
+    assert r["status"] == "VERIFIED"
+    assert 0 < r["timing"]["speedup"] < 0.005
+    assert r["timing"]["speedup_text"].endswith("slower")

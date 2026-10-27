@@ -2,7 +2,8 @@
 #   docker build -t counterexample .
 #   docker run --rm -p 8000:8000 -e COUNTEREXAMPLE_API_TOKEN=<long-random-secret> counterexample
 #   MCP endpoint: http://localhost:8000/mcp  (clients send "Authorization: Bearer <secret>")
-FROM python:3.12-slim
+# Python 3.12.16 slim multi-architecture manifest, pinned to prevent base-image drift.
+FROM python:3.12.16-slim@sha256:e70237b264442328526ff29d6b3c43bd8abcf6cbab78a949322fb69b7d91d6b6
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

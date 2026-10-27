@@ -32,13 +32,26 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    env:
+      COUNTEREXAMPLE_API_TOKEN: ci-token
     steps:
       - uses: actions/checkout@v4
-      - name: Build image
-        run: docker build -t counterexample:ci .
+      - name: Validate the hardened Compose configuration
+        run: docker compose config --quiet
+      - name: Start the hardened HTTP server
+        run: docker compose up --build --detach
+      - name: Verify container hardening is applied
+        run: |
+          cid="$(docker compose ps -q counterexample)"
+          test -n "$cid"
+          test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$cid")" = "true"
+          test "$(docker inspect --format '{{.HostConfig.PidsLimit}}' "$cid")" = "512"
+          test "$(docker inspect --format '{{.HostConfig.Memory}}' "$cid")" = "4294967296"
+          docker inspect --format '{{json .HostConfig.CapDrop}}' "$cid" | grep -q 'ALL'
+          docker inspect --format '{{json .HostConfig.SecurityOpt}}' "$cid" | grep -q 'no-new-privileges:true'
+          docker compose exec -T counterexample sh -c 'touch /tmp/cx-write-test'
       - name: Smoke test the HTTP server
         run: |
-          docker run -d --name cx -p 8000:8000 -e COUNTEREXAMPLE_API_TOKEN=ci-token counterexample:ci
           for i in $(seq 1 30); do
             if curl -sf -o /dev/null -X POST http://localhost:8000/mcp \
                  -H 'authorization: Bearer ci-token'                  -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
@@ -47,9 +60,12 @@ jobs:
             fi
             sleep 1
           done
-          docker logs cx; exit 1
+          docker compose logs; exit 1
       - name: Rejects unauthenticated requests
         run: test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8000/mcp -d '{}')" = "401"
+      - name: Stop the hardened HTTP server
+        if: always()
+        run: docker compose down --volumes --remove-orphans
 
   package:
     runs-on: ubuntu-latest

@@ -38,9 +38,10 @@ nested/touching intervals, and singular matrices are on by default.
 Traditional fuzzers dump 1,000-line crash logs or massive 500-node graphs. If you feed a
 500-element failing array into an LLM context window, its attention degrades into noise: it cannot
 mentally trace state transitions across hundreds of steps. Counterexample uses a deterministic
-binary-search **Delta Shrinker** to crush a 500-element failure down to the smallest possible
-failing input (e.g. `[0, -1, 0]`), turning a chaotic runtime bug into a 3-step trace an LLM can
-solve on the first try.
+binary-search **Delta Shrinker** to reduce a supplied large failure to the smallest possible
+failing input (a 500-element `[0, -1, 0]` pattern reduces to `[0, -1, 0]`), turning a chaotic
+runtime bug into a 3-step trace an LLM can solve on the first try. The arena runs boundary cases
+first, so it may find and report a smaller counterexample before it generates a large failing case.
 
 ### 3. Test-Time Compute & Self-Play for Code
 

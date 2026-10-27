@@ -435,7 +435,9 @@ def run_differential_arena(
 
     o_ns = sum((o.oracle.ns or 0) for _, o in executed if o.verdict == "pass" and o.oracle.ns)
     c_ns = sum((o.candidate.ns or 0) for _, o in executed if o.verdict == "pass" and o.candidate.ns)
-    speedup = round(o_ns / c_ns, 2) if o_ns and c_ns else None
+    # Keep the raw positive ratio.  Rounding a very slow candidate to 0.0
+    # makes the human-readable "x slower" conversion divide by zero.
+    speedup = o_ns / c_ns if o_ns and c_ns else None
 
     kinds: dict[str, int] = {}
     for _, o in failed:
