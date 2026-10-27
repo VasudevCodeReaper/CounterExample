@@ -235,6 +235,8 @@ whose sizes ramp up across the run. Generation is seeded and deterministic.
 * Every implementation runs in its own long-lived child process (`python -I` in a throwaway
   directory; compiled binaries for C++), talking JSON lines. Thousands of calls cost one process
   start, so 10,000 small runs finish in well under a second.
+* Python entrypoints may be synchronous or `async def`; awaitable results are resolved inside the
+  worker before the oracle and candidate outputs are compared.
 * Per-call timeouts kill and respawn the process; segfaults and `os._exit` become `candidate_crash`;
   `print` output never corrupts the protocol.
 * Work is sharded over parallel oracle/candidate process pairs (`COUNTEREXAMPLE_MAX_WORKERS`).

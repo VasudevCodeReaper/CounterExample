@@ -4,7 +4,8 @@ Code under test is exec'd inside ``_python_worker.py`` running as
 ``python -I -X utf8`` in a throwaway working directory, one process per
 implementation.  Entry points are resolved by name, by convention (``oracle``,
 ``brute_force``, ``candidate``, ``solve``...), LeetCode-style ``Solution``
-classes, or as the last top-level function in the snippet.
+classes, or as the last top-level function in the snippet.  Awaitable results
+from async entrypoints are resolved inside the worker.
 """
 
 from __future__ import annotations

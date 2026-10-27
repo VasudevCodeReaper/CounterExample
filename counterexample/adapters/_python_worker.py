@@ -15,8 +15,10 @@ execution trace with changed locals) and ``exit``.  The user's ``print`` output
 is captured per call and never reaches the protocol stream.
 """
 
+import asyncio
 import base64
 import dataclasses
+import inspect
 import io
 import json
 import math
@@ -171,6 +173,23 @@ def _materialize(result):
                 break
             out.append(item)
         return out
+    return result
+
+
+def _invoke(target, args, kwargs):
+    """Call a target and resolve coroutine or other awaitable results.
+
+    ``AsyncFunctionDef`` entrypoints are valid Python entrypoints, but invoking
+    one produces a coroutine object.  Resolving it inside the isolated worker
+    makes synchronous and asynchronous implementations comparable by their
+    actual return values.
+    """
+    result = target.fn(*args, **kwargs)
+    if inspect.isawaitable(result):
+        async def resolve():
+            return await result
+
+        return asyncio.run(resolve())
     return result
 
 
@@ -340,7 +359,7 @@ def op_call(target, msg):
     sys.stdout = sink
     t0 = time.perf_counter_ns()
     try:
-        result = _materialize(target.fn(*args, **kwargs))
+        result = _materialize(_invoke(target, args, kwargs))
         ns = time.perf_counter_ns() - t0
     except BaseException as exc:  # noqa: BLE001 - user code may raise anything
         ns = time.perf_counter_ns() - t0
@@ -384,7 +403,7 @@ def op_profile(target, msg):
             while True:
                 a, k = copy.deepcopy(args), copy.deepcopy(kwargs)
                 t0 = time.perf_counter_ns()
-                _materialize(target.fn(*a, **k))
+                _materialize(_invoke(target, a, k))
                 total += time.perf_counter_ns() - t0
                 loops += 1
                 if total >= min_ns or loops >= 1000 or time.perf_counter_ns() - start > budget_ns:
@@ -397,7 +416,7 @@ def op_profile(target, msg):
             a, k = copy.deepcopy(args), copy.deepcopy(kwargs)
             tracemalloc.start()
             try:
-                _materialize(target.fn(*a, **k))
+                _materialize(_invoke(target, a, k))
                 _, peak = tracemalloc.get_traced_memory()
             finally:
                 tracemalloc.stop()
@@ -471,7 +490,7 @@ def op_trace(target, msg):
     error = None
     sys.settrace(tracer)
     try:
-        result = _materialize(target.fn(*args, **kwargs))
+        result = _materialize(_invoke(target, args, kwargs))
     except BaseException as exc:  # noqa: BLE001
         if isinstance(exc, KeyboardInterrupt):
             raise

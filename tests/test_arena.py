@@ -155,3 +155,16 @@ def test_stdout_noise_does_not_break_protocol():
     noisy = "def f(x: int) -> int:\n    print('debug', x)\n    import sys\n    sys.stdout.write('{\\\"ok\\\": false}\\n')\n    return x\n"
     r = run_differential_arena("def f(x: int) -> int:\n    return x\n", noisy, "int(0,99)", num_runs=200)
     assert r["status"] == "VERIFIED"
+
+
+def test_async_entrypoints_are_awaited():
+    oracle = "async def solve(x: int) -> int:\n    return x * 2\n"
+    candidate = "async def solve(x: int) -> int:\n    return x * 2 + 1\n"
+    r = run_differential_arena(oracle, candidate, {"type": "int", "min": 0, "max": 3}, num_runs=30)
+
+    assert r["status"] == "FALSIFIED"
+    assert r["shrunk_counterexample"]["call"] == "solve(0)"
+    # Display fields are repr strings; receiving concrete numbers here proves
+    # the workers awaited the coroutines instead of comparing their reprs.
+    assert r["oracle_output"] == "0"
+    assert r["candidate_output"] == "1"
