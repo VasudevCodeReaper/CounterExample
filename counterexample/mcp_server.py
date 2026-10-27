@@ -20,7 +20,7 @@ from typing import Any
 import anyio
 
 from counterexample import __version__
-from counterexample.engine import arena, git_oracle, profiler, regression
+from counterexample.engine import arena, git_oracle, profiler, property as property_engine, regression
 from counterexample.generators import GENERATOR_REFERENCE
 from counterexample.resources import skill_text
 
@@ -49,7 +49,11 @@ Self-play loop:
    not guess: trace the candidate on shrunk_counterexample, find the diverging line, patch,
    re-run with the same seed until VERIFIED.
 4. profile_empirical_complexity(candidate_code, ...) to catch silent O(N^2) regressions.
-5. lock_regression_test(counterexample_payload, test_file_path, framework) for every bug found.
+5. When an oracle is unavailable, use run_property_arena with a strong independent invariant or
+   metamorphic relation. A property verdict supports only that stated contract; it is not a full
+   correctness proof.
+6. lock_regression_test(counterexample_payload, test_file_path, framework) for every differential
+   counterexample found.
 """
 
 mcp = _Server(name="counterexample", instructions=INSTRUCTIONS)
@@ -113,6 +117,39 @@ async def run_differential_arena(
         float_tolerance=float_tolerance,
         compare_inputs=compare_inputs,
         oracle_errors=oracle_errors,
+        seed=seed,
+        max_failures=max_failures,
+    )
+
+
+@mcp.tool()
+async def run_property_arena(
+    candidate_code: str,
+    property_code: str,
+    generator_spec: Any = None,
+    num_runs: int | None = None,
+    timeout_ms: int | None = None,
+    candidate_entrypoint: str | None = None,
+    property_entrypoint: str = "property",
+    seed: int = 0,
+    max_failures: int = 1000,
+) -> dict[str, Any]:
+    """Falsify a Python invariant or metamorphic relation when no oracle exists.
+
+    property_code must define ``property(result, *args, **kwargs) -> bool``. It can be async and
+    may call symbols from candidate_code on transformed inputs, for example
+    ``return result == solve(sorted(values))``. A VERIFIED result means this one supplied
+    property held; it is not a proof that the candidate matches an unspecified reference.
+    """
+    return await _offload(
+        property_engine.run_property_arena,
+        candidate_code=candidate_code,
+        property_code=property_code,
+        generator_spec=generator_spec,
+        num_runs=num_runs,
+        timeout_ms=timeout_ms,
+        candidate_entrypoint=candidate_entrypoint,
+        property_entrypoint=property_entrypoint,
         seed=seed,
         max_failures=max_failures,
     )

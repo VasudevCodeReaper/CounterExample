@@ -1,12 +1,13 @@
 """Counterexample: a neuro-symbolic falsification & self-play engine for coding agents.
 
-The public Python API mirrors the four MCP tools exposed by
+The public Python API mirrors the MCP tools exposed by
 :mod:`counterexample.mcp_server`:
 
 * :func:`run_differential_arena`       - falsify a candidate against an oracle.
 * :func:`extract_git_oracle`           - pull a pre-refactor oracle out of git.
 * :func:`profile_empirical_complexity` - fit empirical Big-O growth curves.
 * :func:`lock_regression_test`         - turn a counterexample into a unit test.
+* :func:`run_property_arena`            - falsify an invariant without an oracle.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ _LAZY = {
     "extract_git_oracle": "counterexample.engine.git_oracle",
     "profile_empirical_complexity": "counterexample.engine.profiler",
     "lock_regression_test": "counterexample.engine.regression",
+    "run_property_arena": "counterexample.engine.property",
 }
 
 __all__ = ["__version__", *_LAZY]

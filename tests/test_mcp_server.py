@@ -21,7 +21,7 @@ def _payload(result):
 def test_tools_are_registered():
     tools = anyio.run(mcp.list_tools)
     names = {t.name for t in tools}
-    assert names == {"run_differential_arena", "extract_git_oracle", "profile_empirical_complexity", "lock_regression_test"}
+    assert names == {"run_differential_arena", "run_property_arena", "extract_git_oracle", "profile_empirical_complexity", "lock_regression_test"}
     arena = next(t for t in tools if t.name == "run_differential_arena")
     props = _schema(arena)["properties"]
     for key in ("oracle_code", "candidate_code", "generator_spec", "num_runs", "timeout_ms"):
@@ -48,6 +48,22 @@ def test_call_arena_tool():
     data = _payload(anyio.run(go))
     assert data["status"] == "FALSIFIED"
     assert data["shrunk_counterexample"]["call"] == "f([])"
+
+
+def test_call_property_tool():
+    async def go():
+        return await mcp.call_tool(
+            "run_property_arena",
+            {
+                "candidate_code": "def f(values: list[int]) -> list[int]:\n    return sorted(set(values))\n",
+                "property_code": "def property(result, values):\n    return result == sorted(values)\n",
+                "num_runs": 100,
+            },
+        )
+
+    data = _payload(anyio.run(go))
+    assert data["status"] == "FALSIFIED"
+    assert data["property_counterexample"]["args"] == [[0, 0]]
 
 
 def test_bearer_auth_middleware():

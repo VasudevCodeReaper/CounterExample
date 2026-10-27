@@ -1,6 +1,7 @@
 """``counterexample`` command-line interface (also usable in CI).
 
     counterexample arena --oracle brute.py --candidate fast.py --spec '"list[int(-9,9)]"'
+    counterexample property --candidate sort.py --property sorted_property.py
     counterexample oracle src/algo.py merge_intervals --ref HEAD~1 -o oracle.py
     counterexample profile --candidate fast.py --expected "O(N log N)"
     counterexample lock payload.json tests/test_regressions.py --framework pytest
@@ -84,6 +85,24 @@ def _cmd_arena(a: argparse.Namespace) -> int:
     if a.save_payload and result.get("counterexample_payload"):
         Path(a.save_payload).write_text(json.dumps(result["counterexample_payload"], indent=2), encoding="utf-8")
     _emit(result, a.json, ["shrunk_counterexample", "diff_summary", "candidate_error", "repro", "timing", "warnings"])
+    return {"VERIFIED": 0, "FALSIFIED": 1}.get(result["status"], 2)
+
+
+def _cmd_property(a: argparse.Namespace) -> int:
+    from counterexample.engine.property import run_property_arena
+
+    result = run_property_arena(
+        _read_code(a.candidate),
+        _read_code(a.property),
+        _read_json(a.spec),
+        a.runs,
+        a.timeout_ms,
+        candidate_entrypoint=a.candidate_entry,
+        property_entrypoint=a.property_entry,
+        seed=a.seed,
+        workers=a.workers,
+    )
+    _emit(result, a.json, ["shrunk_counterexample", "property_counterexample", "candidate_error", "warnings"])
     return {"VERIFIED": 0, "FALSIFIED": 1}.get(result["status"], 2)
 
 
@@ -201,6 +220,19 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--save-payload", help="write counterexample_payload JSON here when FALSIFIED")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=_cmd_arena)
+
+    s = sub.add_parser("property", help="falsify an invariant or metamorphic relation without an oracle")
+    s.add_argument("--candidate", required=True, help="Python candidate source file or literal code")
+    s.add_argument("--property", required=True, help="Python source defining property(result, *args, **kwargs)")
+    s.add_argument("--spec", help="generator_spec as JSON, shorthand, a file path or @file")
+    s.add_argument("--runs", type=int, default=None)
+    s.add_argument("--timeout-ms", type=int, default=None)
+    s.add_argument("--candidate-entry", default=None)
+    s.add_argument("--property-entry", default="property")
+    s.add_argument("--seed", type=int, default=0)
+    s.add_argument("--workers", type=int, default=None)
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=_cmd_property)
 
     s = sub.add_parser("oracle", help="extract a pre-refactor oracle from git (extract_git_oracle)")
     s.add_argument("file")

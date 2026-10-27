@@ -69,6 +69,7 @@ shrunk counterexample, fix its state transition, and repeat until verified acros
 | Tool | Input parameters | Output returned to agent |
 | --- | --- | --- |
 | `run_differential_arena` | `oracle_code`, `candidate_code`, `generator_spec`, `num_runs`, `timeout_ms` | Pass rate, speedup multiplier (`24.6x faster`), or the minimal shrunk counterexample + exact diff between Oracle and Candidate outputs. |
+| `run_property_arena` | `candidate_code`, `property_code`, `generator_spec`, `num_runs`, `timeout_ms` | Falsifies a stated invariant or metamorphic relation when no practical oracle exists; returns a shrunk property counterexample. |
 | `extract_git_oracle` | `file_path`, `symbol_name`, `git_ref` | Automatically extracts the pre-refactor implementation from git `HEAD` (or any commit) to act as a zero-effort ground-truth oracle. |
 | `profile_empirical_complexity` | `candidate_code`, `generator_spec`, `scale_steps` | Runs inputs at N = 10¹, 10², 10³, 10⁴, fits execution time & memory growth curves, and flags silent O(N²) regressions before production. |
 | `lock_regression_test` | `counterexample_payload`, `test_file_path`, `framework` | Converts captured minimal counterexamples into permanent `pytest`, `jest` (or `vitest`), or `gtest` unit tests. |
@@ -158,6 +159,7 @@ counterexample install-skill --target both --dir /path/to/your/repo
 ```bash
 counterexample arena --oracle examples/max_subarray/oracle.py --candidate examples/max_subarray/candidate_buggy.py \
                      --spec '{"type": "list", "elements": {"type": "int", "min": -50, "max": 50}, "min_len": 1}'
+counterexample property --candidate candidate.py --property sorted_property.py --spec 'list[int(-50,50)]'
 counterexample profile --candidate examples/max_subarray/candidate_fixed.py --expected "O(N)"
 counterexample oracle src/scheduler.py merge_intervals --ref HEAD~1 -o /tmp/oracle.py
 ```
@@ -179,6 +181,7 @@ counterexample/
 │   ├── codec.py                # Lossless value transport (tuples, sets, NaN/Inf, bytes...)
 │   ├── engine/
 │   │   ├── arena.py            # Parallel sandbox runner
+│   │   ├── property.py         # Invariant & metamorphic falsification
 │   │   ├── shrinker.py         # Delta-debugging reducer
 │   │   ├── profiler.py         # Empirical Big-O fitter
 │   │   ├── git_oracle.py       # Git AST code extractor
@@ -230,6 +233,38 @@ C++ signature.
 Boundary cases are always run first (`0`, `-1`, `INT_MIN`/`INT_MAX`, empty and single-element
 collections, duplicates, isolated nodes, touching intervals, 0×N matrices...), then random inputs
 whose sizes ramp up across the run. Generation is seeded and deterministic.
+
+## Properties and metamorphic relations
+
+When a trustworthy oracle is available, use `run_differential_arena` first. When it is not—or to
+add a contract-specific safety net—`run_property_arena` evaluates a Python function named
+`property(result, *args, **kwargs)` against generated inputs. Returning `False` produces a delta-
+shrunk `property_counterexample`.
+
+```python
+# candidate.py
+def normalize(values: list[int]) -> list[int]:
+    return sorted(set(values))  # deliberately wrong if duplicates matter
+```
+
+```python
+# sorted_property.py
+def property(result, values):
+    return result == sorted(values) and len(result) == len(values)
+```
+
+The same property can call the candidate on a valid transformation, which enables metamorphic
+testing without a separate expected output:
+
+```python
+# candidate.py defines total(values)
+def property(result, values):
+    return result == total(list(reversed(values)))  # total should ignore ordering
+```
+
+Property verification establishes only the stated invariant, not complete correctness. Keep the
+property independent of the candidate's algorithm, use holdout seeds, and add an independent
+oracle whenever feasible.
 
 ## How the sandbox works
 

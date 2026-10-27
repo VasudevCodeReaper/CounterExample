@@ -1,6 +1,6 @@
 ---
 name: counterexample
-description: Neuro-symbolic falsification, differential stress-testing, and delta-shrinking skill. Invoke whenever optimizing algorithms, refactoring existing functions, implementing complex state machines/graphs/dynamic programming, or verifying bug fixes where standard unit tests could share blind spots with the implementation.
+description: Falsify code changes with independent oracles, adversarial generators, metamorphic properties, delta-shrinking, and empirical complexity checks. Use for behavior-preserving refactors, algorithms, stateful logic, boundary bugs, or bug fixes that need stronger evidence than unit tests.
 ---
 
 # Counterexample: Falsification & Self-Play Protocol
@@ -10,9 +10,9 @@ optimizations, or code refactors. Standard unit tests written in the same contex
 from shared blindspots. Use the Counterexample engine to empirically falsify your code and
 compress failing inputs into minimal counterexamples.
 
-The engine is available as MCP tools (`run_differential_arena`, `extract_git_oracle`,
-`profile_empirical_complexity`, `lock_regression_test`) and as the `counterexample` CLI with the
-same capabilities (`arena`, `oracle`, `profile`, `lock`).
+The engine is available as MCP tools (`run_differential_arena`, `run_property_arena`,
+`extract_git_oracle`, `profile_empirical_complexity`, `lock_regression_test`) and as the
+`counterexample` CLI (`arena`, `property`, `oracle`, `profile`, `lock`).
 
 ## When to Trigger This Skill
 
@@ -29,7 +29,7 @@ same capabilities (`arena`, `oracle`, `profile`, `lock`).
 
 ### STEP 01: Establish the Ground-Truth Oracle
 
-You cannot falsify candidate code without a source of truth. Choose one of two strategies:
+Differential falsification needs a source of truth. Choose one of two strategies:
 
 - **Case A: Refactoring Existing Code.** Call
   `extract_git_oracle(file_path, symbol_name, git_ref="HEAD")` to retrieve the untouched prior
@@ -43,6 +43,28 @@ You cannot falsify candidate code without a source of truth. Choose one of two s
 
 The Oracle must be independent of the Candidate: never derive it by simplifying the candidate,
 and never edit the Oracle to make a failing run pass.
+
+### STEP 01B: Add a Property When It Adds Independent Evidence
+
+When no practical oracle exists, or when a high-value invariant supplements differential testing,
+call `run_property_arena(candidate_code, property_code, generator_spec)`. The property source must
+define `property(result, *args, **kwargs) -> bool`. It can be async and may call the candidate on a
+transformed input to express a metamorphic relation:
+
+```python
+# candidate defines solve(values)
+def property(result, values):
+    return result == solve(list(reversed(values)))  # order-invariance relation
+```
+
+Use properties that follow directly from the contract: ordering plus element preservation,
+conservation laws, bounds, idempotence, reversibility, or invariance under a valid transformation.
+Do not recreate the candidate's algorithm inside `property`. Property mode checks only the stated
+invariant; a `PROPERTY VERIFIED` result is not full behavioral equivalence. Prefer an independent
+oracle whenever one is feasible.
+
+For stateful, time-dependent, random, networked, or database-backed code, first isolate a
+deterministic pure adapter. Do not treat an in-process property check as an integration test.
 
 ### STEP 02: Configure the Adversarial Generator
 
@@ -91,18 +113,25 @@ Repeat until VERIFIED.
 2. Call `profile_empirical_complexity(candidate_code, generator_spec, scale_steps=[10, 100, 1000, 10000],
    expected_complexity="O(N log N)")`. A `FLAGGED` result (`SUPERLINEAR`, `REGRESSION`, `TIMEOUT`)
    means the optimization is not what it claims; treat it as a failure.
+3. Run at least two holdout seeds with the same domain after the repair passes the reproduction
+   seed. Widen ranges or sizes where the oracle remains tractable. One deterministic seed is a
+   reproducible diagnosis, not sufficient final coverage.
 
 ### STEP 05: Lock the Regression
 
-For every counterexample found during the loop, call
+For every *differential* counterexample found during the loop, call
 `lock_regression_test(counterexample_payload, test_file_path, framework)` with `pytest`, `jest`,
 `vitest` or `gtest`. Pass `module` (import path / header) when the definition cannot be found
 automatically. Run the generated test (`run_command`) to confirm it passes against the fixed code.
+For property failures, preserve `property_counterexample` and encode that input plus the explicit
+property in the target test suite.
 
 ## Rules
 
-- Never report "all tests pass" for non-trivial logic without a `VERIFIED` arena run.
-- Never weaken the oracle, the comparator, or the generator to make a failure disappear. Use
+- Never report "all tests pass" for non-trivial logic without a differential `VERIFIED` arena run,
+  or clearly state that only named properties were checked when an oracle is unavailable.
+- Never weaken the oracle, comparator, property, or generator to make a failure disappear. Use
   `comparator="unordered"`/`"set"`/`"approx"` only when the specification genuinely allows it.
 - Fix the root cause on the minimal input; do not special-case the counterexample's values.
-- Report the final pass rate, run count, speedup and empirical complexity to the user.
+- Report the evidence mode, oracle provenance or exact property, seeds, final pass rate/run count,
+  speedup, and empirical complexity to the user.

@@ -29,6 +29,16 @@ def test_arena_spec_shorthand_and_json(tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)["status"] == "VERIFIED"
 
 
+def test_property_cli(tmp_path, capsys):
+    candidate = tmp_path / "candidate.py"
+    property_file = tmp_path / "property.py"
+    candidate.write_text("def f(values: list[int]) -> list[int]:\n    return sorted(set(values))\n", encoding="utf-8")
+    property_file.write_text("def property(result, values):\n    return result == sorted(values)\n", encoding="utf-8")
+
+    assert main(["property", "--candidate", str(candidate), "--property", str(property_file), "--runs", "50"]) == 1
+    assert "PROPERTY FALSIFIED" in capsys.readouterr().out
+
+
 def test_install_skill_and_generators(tmp_path, capsys):
     assert main(["install-skill", "--dir", str(tmp_path)]) == 0
     for sub in (".claude/skills/counterexample/SKILL.md", ".agents/skills/counterexample/SKILL.md"):
