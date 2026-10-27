@@ -39,6 +39,45 @@ def test_property_cli(tmp_path, capsys):
     assert "PROPERTY FALSIFIED" in capsys.readouterr().out
 
 
+def test_arena_cli_import_path_and_fixtures(tmp_path, capsys):
+    (tmp_path / "project_mod.py").write_text(
+        "import time\ndef f(value: int) -> tuple[int, float]:\n    return value, time.time()\n",
+        encoding="utf-8",
+    )
+    wrapper = tmp_path / "wrapper.py"
+    wrapper.write_text("from project_mod import f\n", encoding="utf-8")
+    fixture = tmp_path / "fixture.py"
+    fixture.write_text(
+        "import time\n_real = time.time\ndef before_call(args, kwargs):\n    time.time = lambda: 123.0\ndef after_call(args, kwargs, result, error):\n    time.time = _real\n",
+        encoding="utf-8",
+    )
+
+    assert main(
+        [
+            "arena",
+            "--oracle",
+            str(wrapper),
+            "--candidate",
+            str(wrapper),
+            "--oracle-entry",
+            "f",
+            "--candidate-entry",
+            "f",
+            "--import-path",
+            str(tmp_path),
+            "--oracle-fixture",
+            str(fixture),
+            "--candidate-fixture",
+            str(fixture),
+            "--spec",
+            "int(0,2)",
+            "--runs",
+            "12",
+        ]
+    ) == 0
+    assert "VERIFIED" in capsys.readouterr().out
+
+
 def test_install_skill_and_generators(tmp_path, capsys):
     assert main(["install-skill", "--dir", str(tmp_path)]) == 0
     for sub in (".claude/skills/counterexample/SKILL.md", ".agents/skills/counterexample/SKILL.md"):

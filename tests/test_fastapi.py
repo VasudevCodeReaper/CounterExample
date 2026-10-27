@@ -47,3 +47,37 @@ def test_endpoint_migration_falsified():
 def test_endpoint_identical_verified():
     r = run_differential_arena(LEGACY, LEGACY, SPEC, num_runs=150)
     assert r["status"] == "VERIFIED"
+
+
+def test_endpoint_fixture_can_inject_deterministic_auth_state():
+    oracle = '''
+from fastapi import FastAPI
+app = FastAPI()
+
+@app.get("/private")
+def private():
+    return {"role": "admin"}
+'''
+    candidate = '''
+from fastapi import FastAPI
+app = FastAPI()
+claims = None
+
+@app.get("/private")
+def private():
+    return {"role": claims["role"] if claims else "anonymous"}
+'''
+    auth_fixture = '''
+def before_call(args, kwargs):
+    global claims
+    claims = {"role": "admin", "exp": 2_000_000_000}
+
+def after_call(args, kwargs, result, error):
+    global claims
+    claims = None
+'''
+    spec = {"type": "http_request", "method": "GET", "path": "/private"}
+
+    r = run_differential_arena(oracle, candidate, spec, num_runs=10, candidate_fixture_code=auth_fixture)
+
+    assert r["status"] == "VERIFIED", r

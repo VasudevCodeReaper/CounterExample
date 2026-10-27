@@ -26,11 +26,26 @@ from counterexample.generators import SpecError
 class FastAPIImplementation(PythonImplementation):
     language = "fastapi"
 
-    def __init__(self, code: str, *, role: str, entrypoint: str | None = None):
+    def __init__(
+        self,
+        code: str,
+        *,
+        role: str,
+        entrypoint: str | None = None,
+        import_paths: list[str] | None = None,
+        fixture_code: str | None = None,
+    ):
         is_url = code.strip().startswith(("http://", "https://"))
         if not is_url and importlib.util.find_spec("fastapi") is None:
             raise WorkerError("the fastapi adapter needs `pip install counterexample[fastapi]` (fastapi + httpx)")
-        super().__init__(code, role=role, entrypoint=entrypoint, mode="fastapi")
+        super().__init__(
+            code,
+            role=role,
+            entrypoint=entrypoint,
+            mode="fastapi",
+            import_paths=import_paths,
+            fixture_code=fixture_code,
+        )
 
     def infer_spec(self) -> dict[str, Any]:
         raise SpecError(
@@ -39,7 +54,13 @@ class FastAPIImplementation(PythonImplementation):
         )
 
     def describe(self) -> dict[str, Any]:
-        return {"language": self.language, "entrypoint": self.entrypoint, "target": "url" if self.code.strip().startswith("http") else "app"}
+        return {
+            "language": self.language,
+            "entrypoint": self.entrypoint,
+            "target": "url" if self.code.strip().startswith("http") else "app",
+            "import_paths": self.import_paths,
+            "has_fixture": self.fixture_code is not None,
+        }
 
     @property
     def supports_trace(self) -> bool:

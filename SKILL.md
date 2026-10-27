@@ -63,8 +63,59 @@ Do not recreate the candidate's algorithm inside `property`. Property mode check
 invariant; a `PROPERTY VERIFIED` result is not full behavioral equivalence. Prefer an independent
 oracle whenever one is feasible.
 
-For stateful, time-dependent, random, networked, or database-backed code, first isolate a
-deterministic pure adapter. Do not treat an in-process property check as an integration test.
+### STEP 01C: Test a Vibe-Coded Project at Its Integration Seam
+
+For Python/FastAPI code, the arena can import a real local project while retaining an isolated
+worker. Give `import_paths` (MCP/API) or repeat `--import-path` (CLI) for each project root, and
+submit a small wrapper that imports the behavior under test. Because imported callables are not
+defined in the wrapper, pass the explicit entrypoint:
+
+```python
+# candidate_wrapper.py
+from myapp.checkout import quote_order
+```
+
+```bash
+counterexample arena --oracle old_wrapper.py --candidate candidate_wrapper.py \
+  --oracle-entry quote_order --candidate-entry quote_order --import-path . \
+  --spec @quote_inputs.json
+```
+
+Use `oracle_fixture_code` / `candidate_fixture_code` (MCP/API) or `--oracle-fixture` /
+`--candidate-fixture` (CLI) for Python hooks that run around **every generated call**:
+
+```python
+# fixture.py
+import random
+import myapp.checkout as checkout
+
+def before_call(args, kwargs):
+    random.seed(991)
+    checkout.db = checkout.make_test_db()      # fresh local SQLite/test DB
+    checkout.fetch_tax = lambda *_: {"rate": 0.07}  # never call a real API
+
+def after_call(args, kwargs, result, error):
+    checkout.db.close()                        # rollback/cleanup even after a failure
+```
+
+Hooks may be `async`; their setup and cleanup time is excluded from implementation timings.
+Choose the seam deliberately:
+
+- **Database:** create a fresh local test database or transaction in `before_call`; rollback or
+  close it in `after_call`. Generate commands/requests, not production credentials.
+- **External APIs:** replace the project's client/function with a deterministic fake and assert its
+  resulting response or recorded request. Never fuzz production endpoints.
+- **OAuth/auth:** inject a local fake verifier or FastAPI dependency override with controlled
+  claims, expiry, role, and malformed-token cases; do not contact an identity provider.
+- **Time/randomness:** freeze the project's clock and seed/inject its RNG before each call, then
+  restore them in cleanup.
+- **UI:** Counterexample does not drive a browser or validate pixels/DOM. Test reducers, form
+  validation, request builders, and serialized action sequences through a wrapper; keep genuine
+  browser E2E/accessibility checks in a browser harness.
+
+This is an integration seam, not a security boundary and not a substitute for a full browser or
+remote-service environment. It makes the application logic behind those boundaries falsifiable and
+reproducible.
 
 ### STEP 02: Configure the Adversarial Generator
 

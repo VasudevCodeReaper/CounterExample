@@ -111,6 +111,8 @@ def run_property_arena(
     seed: int = 0,
     max_failures: int = 1000,
     workers: int | None = None,
+    import_paths: list[str] | None = None,
+    fixture_code: str | None = None,
 ) -> dict[str, Any]:
     """Falsify a candidate against a property or metamorphic relation.
 
@@ -118,13 +120,24 @@ def run_property_arena(
     The function may be ``async`` and may call symbols from ``candidate_code``
     to express a metamorphic relation.  For example, an order-independent
     function can check ``result == solve(sorted(values))``.
+
+    ``import_paths`` allows the candidate wrapper to import a local project
+    module. ``fixture_code`` may define sync or async ``before_call`` and
+    ``after_call`` hooks to reset external state for every generated case.
     """
 
     prop_error = _top_level_callable(property_code, property_entrypoint, "property_code")
     if prop_error:
         return prop_error
     try:
-        candidate = make_implementation(candidate_code, role="candidate", language="python", entrypoint=candidate_entrypoint)
+        candidate = make_implementation(
+            candidate_code,
+            role="candidate",
+            language="python",
+            entrypoint=candidate_entrypoint,
+            import_paths=import_paths,
+            fixture_code=fixture_code,
+        )
     except WorkerError as exc:
         return _error(str(exc), phase="load", details=exc.info)
     if candidate.language != "python":  # defensive: language is forced above
@@ -153,6 +166,8 @@ def run_property_arena(
         seed=seed,
         max_failures=max_failures,
         workers=workers,
+        import_paths=import_paths,
+        candidate_fixture_code=fixture_code,
     )
     if result.get("status") == "ERROR":
         return result

@@ -214,17 +214,22 @@ class Target:
     def __init__(self, setup):
         self.mode = setup.get("mode", "function")
         self.code_name = setup.get("filename", "<candidate>")
+        self.fixture_name = f"{self.code_name}:fixture"
         self.namespace = {"__name__": "__counterexample__", "__builtins__": __builtins__}
         self.client = None
         self.base_url = None
         self._async_loop = None
         self.await_overhead_ns = 0
+        self._before_call = None
+        self._after_call = None
+        self._install_import_paths(setup.get("import_paths"))
         code = setup["code"]
         self.source = code
         if self.mode == "fastapi" and code.strip().startswith(("http://", "https://")):
             self.base_url = code.strip().rstrip("/")
             self.fn = self._http_url_call
             self.name = self.base_url
+            self._load_fixture(setup.get("fixture_code"))
             return
         compiled = compile(code, self.code_name, "exec")
         sink = io.StringIO()
@@ -234,12 +239,57 @@ class Target:
             exec(compiled, self.namespace)
         finally:
             sys.stdout = old
+        self._load_fixture(setup.get("fixture_code"))
         if self.mode == "fastapi":
             self._setup_fastapi(setup.get("entrypoint"))
         else:
             self.fn, self.name = self._resolve(setup.get("entrypoint"), setup.get("role", "candidate"))
             if inspect.iscoroutinefunction(self.fn) or getattr(self.fn, "_counterexample_async", False):
                 self._prepare_async_loop()
+
+    @staticmethod
+    def _install_import_paths(paths):
+        """Expose opt-in project roots even though the worker uses ``python -I``."""
+
+        if paths is None:
+            return
+        if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
+            raise TypeError("import_paths must be a list of directory paths")
+        # Insert in reverse so ``[project, shared]`` keeps project first.
+        for raw in reversed(paths):
+            path = os.path.abspath(raw)
+            if not os.path.isdir(path):
+                raise FileNotFoundError(f"import path is not a directory: {raw!r}")
+            if path not in sys.path:
+                sys.path.insert(0, path)
+
+    def _load_fixture(self, source):
+        """Install optional per-call lifecycle hooks in the target namespace."""
+
+        if source is None or source == "":
+            return
+        if not isinstance(source, str):
+            raise TypeError("fixture_code must be Python source")
+        exec(compile(source, self.fixture_name, "exec"), self.namespace)
+        for name, attr in (("before_call", "_before_call"), ("after_call", "_after_call")):
+            hook = self.namespace.get(name)
+            if hook is not None and not callable(hook):
+                raise TypeError(f"fixture {name} must be callable")
+            setattr(self, attr, hook)
+
+    def before_call(self, args, kwargs):
+        if self._before_call is None:
+            return
+        value = self._before_call(args, kwargs)
+        if inspect.isawaitable(value):
+            self.resolve_awaitable(value)
+
+    def after_call(self, args, kwargs, result, error):
+        if self._after_call is None:
+            return
+        value = self._after_call(args, kwargs, result, error)
+        if inspect.isawaitable(value):
+            self.resolve_awaitable(value)
 
     def _prepare_async_loop(self):
         if self._async_loop is not None:
@@ -402,26 +452,41 @@ def op_call(target, msg):
     sink = io.StringIO()
     old = sys.stdout
     sys.stdout = sink
-    t0 = time.perf_counter_ns()
+    t0 = None
+    result = None
+    error = None
+    args_after = None
     try:
+        target.before_call(args, kwargs)
+        t0 = time.perf_counter_ns()
         result, overhead_ns = _invoke(target, args, kwargs)
         result = _materialize(result)
         ns = max(1, time.perf_counter_ns() - t0 - overhead_ns)
+        if result is None or msg.get("observe_args"):
+            # Keep mutations made by the implementation, before a fixture
+            # rolls state back for the next generated input.
+            args_after = encode(list(args))
     except BaseException as exc:  # noqa: BLE001 - user code may raise anything
-        ns = time.perf_counter_ns() - t0
+        error = exc
+        ns = max(0, time.perf_counter_ns() - t0) if t0 is not None else 0
+    finally:
+        try:
+            target.after_call(args, kwargs, result, error)
+        except BaseException as cleanup:  # noqa: BLE001 - fixture code is user code too
+            if error is None:
+                error = cleanup
         sys.stdout = old
-        if isinstance(exc, KeyboardInterrupt):
-            raise
-        reply = {"id": msg.get("id"), "ok": False, "ns": ns, **_exc_info(exc, target.code_name)}
+    if error is not None:
+        if isinstance(error, KeyboardInterrupt):
+            raise error
+        reply = {"id": msg.get("id"), "ok": False, "ns": ns, **_exc_info(error, target.code_name)}
         printed = sink.getvalue()
         if printed:
             reply["stdout"] = printed[-STDOUT_LIMIT:]
         return reply
-    finally:
-        sys.stdout = old
     reply = {"id": msg.get("id"), "ok": True, "ns": ns, "out": encode(result)}
-    if result is None or msg.get("observe_args"):
-        reply["args_after"] = encode(list(args))
+    if args_after is not None:
+        reply["args_after"] = args_after
     printed = sink.getvalue()
     if printed and msg.get("capture", True):
         reply["stdout"] = printed[-STDOUT_LIMIT:]
@@ -448,10 +513,24 @@ def op_profile(target, msg):
             total = 0
             while True:
                 a, k = copy.deepcopy(args), copy.deepcopy(kwargs)
-                t0 = time.perf_counter_ns()
-                result, overhead_ns = _invoke(target, a, k)
-                _materialize(result)
-                total += max(1, time.perf_counter_ns() - t0 - overhead_ns)
+                result = None
+                error = None
+                try:
+                    target.before_call(a, k)
+                    t0 = time.perf_counter_ns()
+                    result, overhead_ns = _invoke(target, a, k)
+                    _materialize(result)
+                    total += max(1, time.perf_counter_ns() - t0 - overhead_ns)
+                except BaseException as exc:  # noqa: BLE001
+                    error = exc
+                finally:
+                    try:
+                        target.after_call(a, k, result, error)
+                    except BaseException as cleanup:  # noqa: BLE001
+                        if error is None:
+                            error = cleanup
+                if error is not None:
+                    raise error
                 loops += 1
                 if total >= min_ns or loops >= 1000 or time.perf_counter_ns() - start > budget_ns:
                     break
@@ -462,12 +541,24 @@ def op_profile(target, msg):
         if msg.get("memory", True):
             a, k = copy.deepcopy(args), copy.deepcopy(kwargs)
             tracemalloc.start()
+            result = None
+            error = None
             try:
+                target.before_call(a, k)
                 result, _ = _invoke(target, a, k)
                 _materialize(result)
                 _, peak = tracemalloc.get_traced_memory()
+            except BaseException as exc:  # noqa: BLE001
+                error = exc
             finally:
+                try:
+                    target.after_call(a, k, result, error)
+                except BaseException as cleanup:  # noqa: BLE001
+                    if error is None:
+                        error = cleanup
                 tracemalloc.stop()
+            if error is not None:
+                raise error
     except BaseException as exc:  # noqa: BLE001
         sys.stdout = old
         if isinstance(exc, KeyboardInterrupt):
@@ -536,20 +627,26 @@ def op_trace(target, msg):
     sys.stdout = sink
     result = None
     error = None
-    sys.settrace(tracer)
     try:
+        target.before_call(args, kwargs)
+        sys.settrace(tracer)
         result, _ = _invoke(target, args, kwargs)
         result = _materialize(result)
     except BaseException as exc:  # noqa: BLE001
         if isinstance(exc, KeyboardInterrupt):
             raise
-        error = _exc_info(exc, code_name)
+        error = exc
     finally:
         sys.settrace(None)
+        try:
+            target.after_call(args, kwargs, result, error)
+        except BaseException as cleanup:  # noqa: BLE001
+            if error is None:
+                error = cleanup
         sys.stdout = old
     reply = {"id": msg.get("id"), "ok": error is None, "trace": events, "truncated": truncated[0]}
     if error:
-        reply.update(error)
+        reply.update(_exc_info(error, code_name))
     else:
         reply["out"] = encode(result)
     return reply

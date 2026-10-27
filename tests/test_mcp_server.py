@@ -26,7 +26,11 @@ def test_tools_are_registered():
     props = _schema(arena)["properties"]
     for key in ("oracle_code", "candidate_code", "generator_spec", "num_runs", "timeout_ms"):
         assert key in props
+    for key in ("import_paths", "oracle_fixture_code", "candidate_fixture_code"):
+        assert key in props
     assert {"oracle_code", "candidate_code"} <= set(_schema(arena)["required"])
+    property_tool = next(t for t in tools if t.name == "run_property_arena")
+    assert {"import_paths", "fixture_code"} <= set(_schema(property_tool)["properties"])
 
 
 def test_resources_are_registered():

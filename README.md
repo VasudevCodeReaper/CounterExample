@@ -78,6 +78,9 @@ Optional parameters (all tools): `oracle_entrypoint` / `candidate_entrypoint` / 
 `language` (`auto`, `python`, `cpp`, `fastapi`; oracle and candidate may differ), `comparator`
 (`auto`, `exact`, `strict`, `approx`, `unordered`, `unordered_deep`, `set`), `oracle_errors`
 (`discard` | `fail`), `seed`, `expected_complexity`, `module` (import path for locked tests).
+For Python/FastAPI integrations, `import_paths` exposes explicit local project roots to the
+isolated worker; `oracle_fixture_code` and `candidate_fixture_code` provide per-call setup and
+cleanup hooks. Property mode accepts `import_paths` and `fixture_code` for its candidate.
 
 ### What a falsification looks like
 
@@ -265,6 +268,57 @@ def property(result, values):
 Property verification establishes only the stated invariant, not complete correctness. Keep the
 property independent of the candidate's algorithm, use holdout seeds, and add an independent
 oracle whenever feasible.
+
+## Testing a real project: databases, fakes, auth, and clocks
+
+The arena is no longer limited to self-contained snippets. For Python and FastAPI, point an
+isolated worker at one or more local project roots with `import_paths` (or CLI `--import-path`) and
+submit a small wrapper that imports the real behavior. Use an explicit entrypoint because an
+imported function is not defined by the wrapper itself:
+
+```python
+# candidate_wrapper.py
+from myapp.checkout import quote_order
+```
+
+```bash
+counterexample arena --oracle old_wrapper.py --candidate candidate_wrapper.py \
+  --oracle-entry quote_order --candidate-entry quote_order --import-path . \
+  --spec @quote_inputs.json
+```
+
+Supply `--oracle-fixture` and `--candidate-fixture` (or the API/MCP
+`oracle_fixture_code`/`candidate_fixture_code` arguments) to reset dependencies around **every
+generated case**. A fixture is Python source defining either or both of these hooks; hooks may be
+`async` and their setup/cleanup time is excluded from implementation timings.
+
+```python
+# fixture.py
+import random
+import myapp.checkout as checkout
+
+def before_call(args, kwargs):
+    random.seed(991)
+    checkout.db = checkout.make_test_db()      # isolated local SQLite/test database
+    checkout.fetch_tax = lambda *_: {"rate": 0.07}  # deterministic fake; no real HTTP
+
+def after_call(args, kwargs, result, error):
+    checkout.db.close()                        # rollback/close after success or error
+```
+
+This covers the application logic behind common vibe-code boundaries:
+
+| Boundary | Recommended fixture seam |
+| --- | --- |
+| Database | Fresh local SQLite/test DB or transaction in `before_call`; rollback/close in `after_call`. |
+| External API | Replace the client/function with a deterministic fake; do not generate traffic against production endpoints. |
+| OAuth/auth | Inject a local token verifier or FastAPI dependency override with controlled claims, expiry, roles, and malformed tokens. |
+| Time/randomness | Freeze the project clock and seed/inject the RNG, then restore both in cleanup. |
+| UI | Test reducers, validation, request builders, and serialized actions via wrappers. Browser DOM/pixels/accessibility remain the job of a browser E2E harness. |
+
+Fixtures execute arbitrary project-local Python just like the code under test: they are an
+integration seam, not a security boundary or a replacement for a real browser/remote-service
+environment.
 
 ## How the sandbox works
 

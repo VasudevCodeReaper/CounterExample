@@ -81,6 +81,9 @@ def _cmd_arena(a: argparse.Namespace) -> int:
         oracle_errors=a.oracle_errors,
         seed=a.seed,
         workers=a.workers,
+        import_paths=a.import_path,
+        oracle_fixture_code=_read_code(a.oracle_fixture) if a.oracle_fixture else None,
+        candidate_fixture_code=_read_code(a.candidate_fixture) if a.candidate_fixture else None,
     )
     if a.save_payload and result.get("counterexample_payload"):
         Path(a.save_payload).write_text(json.dumps(result["counterexample_payload"], indent=2), encoding="utf-8")
@@ -101,6 +104,8 @@ def _cmd_property(a: argparse.Namespace) -> int:
         property_entrypoint=a.property_entry,
         seed=a.seed,
         workers=a.workers,
+        import_paths=a.import_path,
+        fixture_code=_read_code(a.fixture) if a.fixture else None,
     )
     _emit(result, a.json, ["shrunk_counterexample", "property_counterexample", "candidate_error", "warnings"])
     return {"VERIFIED": 0, "FALSIFIED": 1}.get(result["status"], 2)
@@ -217,6 +222,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--oracle-errors", default="discard", choices=["discard", "fail"])
     s.add_argument("--seed", type=int, default=0)
     s.add_argument("--workers", type=int, default=None)
+    s.add_argument(
+        "--import-path",
+        action="append",
+        default=None,
+        help="project root visible to isolated Python/FastAPI workers; repeat for multiple roots",
+    )
+    s.add_argument("--oracle-fixture", help="Python fixture source/file with before_call/after_call hooks for the oracle")
+    s.add_argument("--candidate-fixture", help="Python fixture source/file with before_call/after_call hooks for the candidate")
     s.add_argument("--save-payload", help="write counterexample_payload JSON here when FALSIFIED")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=_cmd_arena)
@@ -231,6 +244,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--property-entry", default="property")
     s.add_argument("--seed", type=int, default=0)
     s.add_argument("--workers", type=int, default=None)
+    s.add_argument(
+        "--import-path",
+        action="append",
+        default=None,
+        help="project root visible to the isolated Python candidate worker; repeat for multiple roots",
+    )
+    s.add_argument("--fixture", help="Python fixture source/file with before_call/after_call hooks")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=_cmd_property)
 

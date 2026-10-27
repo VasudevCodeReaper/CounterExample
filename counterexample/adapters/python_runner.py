@@ -4,8 +4,9 @@ Code under test is exec'd inside ``_python_worker.py`` running as
 ``python -I -X utf8`` in a throwaway working directory, one process per
 implementation.  Entry points are resolved by name, by convention (``oracle``,
 ``brute_force``, ``candidate``, ``solve``...), LeetCode-style ``Solution``
-classes, or as the last top-level function in the snippet.  Awaitable results
-from async entrypoints are resolved inside the worker.
+classes, or as the last top-level function in the snippet.  ``import_paths``
+exposes explicitly supplied project roots to that isolated worker, while
+``fixture_code`` can reset external state around every generated call.
 """
 
 from __future__ import annotations
@@ -51,12 +52,23 @@ def resolve_entrypoint(code: str, role: str, explicit: str | None = None) -> str
 class PythonImplementation:
     language = "python"
 
-    def __init__(self, code: str, *, role: str, entrypoint: str | None = None, mode: str = "function"):
+    def __init__(
+        self,
+        code: str,
+        *,
+        role: str,
+        entrypoint: str | None = None,
+        mode: str = "function",
+        import_paths: list[str] | None = None,
+        fixture_code: str | None = None,
+    ):
         self.code = code
         self.role = role
         self.mode = mode
         self.filename = f"<{role}>"
         self.settings = get_settings()
+        self.import_paths = self._validate_import_paths(import_paths)
+        self.fixture_code = self._validate_fixture_code(fixture_code)
         if mode == "function":
             try:
                 ast.parse(code)
@@ -68,6 +80,37 @@ class PythonImplementation:
             self.entrypoint = resolve_entrypoint(code, role, entrypoint)
         else:
             self.entrypoint = entrypoint or "app"
+
+    @staticmethod
+    def _validate_import_paths(import_paths: list[str] | None) -> list[str]:
+        if import_paths is None:
+            return []
+        if not isinstance(import_paths, list) or not all(isinstance(path, str) for path in import_paths):
+            raise WorkerError("import_paths must be a list of existing directory paths")
+        paths: list[str] = []
+        for raw in import_paths:
+            path = Path(raw).expanduser().resolve()
+            if not path.is_dir():
+                raise WorkerError(f"import path is not a directory: {raw!r}")
+            text = str(path)
+            if text not in paths:
+                paths.append(text)
+        return paths
+
+    @staticmethod
+    def _validate_fixture_code(fixture_code: str | None) -> str | None:
+        if fixture_code is None or fixture_code == "":
+            return None
+        if not isinstance(fixture_code, str):
+            raise WorkerError("fixture_code must be Python source defining optional before_call/after_call hooks")
+        try:
+            compile(fixture_code, "<fixture>", "exec")
+        except SyntaxError as exc:
+            raise WorkerError(
+                f"fixture_code has a syntax error at line {exc.lineno}: {exc.msg}",
+                {"exc": "SyntaxError", "line": exc.lineno, "msg": exc.msg},
+            ) from exc
+        return fixture_code
 
     def prepare(self) -> None:
         """Nothing to compile for Python; syntax was checked in ``__init__``."""
@@ -84,6 +127,8 @@ class PythonImplementation:
             "role": self.role,
             "mode": self.mode,
             "filename": self.filename,
+            "import_paths": self.import_paths,
+            "fixture_code": self.fixture_code,
         }
         env = sandbox_env({"CX_MEMORY_MB": str(self.settings.sandbox_memory_mb)})
         return ProcessSide(
@@ -95,7 +140,13 @@ class PythonImplementation:
         )
 
     def describe(self) -> dict[str, Any]:
-        return {"language": self.language, "entrypoint": self.entrypoint, "mode": self.mode}
+        return {
+            "language": self.language,
+            "entrypoint": self.entrypoint,
+            "mode": self.mode,
+            "import_paths": self.import_paths,
+            "has_fixture": self.fixture_code is not None,
+        }
 
     @property
     def supports_trace(self) -> bool:

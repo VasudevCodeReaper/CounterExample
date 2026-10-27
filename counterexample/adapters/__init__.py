@@ -68,21 +68,30 @@ def normalize_language(language: str | None, code: str) -> str:
     return lang
 
 
-def make_implementation(code: str, *, role: str, language: str | None = "auto", entrypoint: str | None = None, cxx_std: str | None = None) -> Implementation:
+def make_implementation(
+    code: str,
+    *,
+    role: str,
+    language: str | None = "auto",
+    entrypoint: str | None = None,
+    cxx_std: str | None = None,
+    import_paths: list[str] | None = None,
+    fixture_code: str | None = None,
+) -> Implementation:
     if not isinstance(code, str) or not code.strip():
         raise WorkerError(f"{role}_code is empty")
     lang = normalize_language(language, code)
     if lang == "python":
         from counterexample.adapters.python_runner import PythonImplementation
 
-        return PythonImplementation(code, role=role, entrypoint=entrypoint)
+        return PythonImplementation(code, role=role, entrypoint=entrypoint, import_paths=import_paths, fixture_code=fixture_code)
     if lang == "cpp":
         from counterexample.adapters.cpp_runner import CppImplementation
 
         return CppImplementation(code, role=role, entrypoint=entrypoint, std=cxx_std)
     from counterexample.adapters.fastapi_runner import FastAPIImplementation
 
-    return FastAPIImplementation(code, role=role, entrypoint=entrypoint)
+    return FastAPIImplementation(code, role=role, entrypoint=entrypoint, import_paths=import_paths, fixture_code=fixture_code)
 
 
 __all__ = [

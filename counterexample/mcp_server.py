@@ -54,6 +54,10 @@ Self-play loop:
    correctness proof.
 6. lock_regression_test(counterexample_payload, test_file_path, framework) for every differential
    counterexample found.
+7. For a local Python/FastAPI project with database, auth, HTTP, clock, or RNG state, pass its
+   root in import_paths and a fixture hook that resets a local fake/test dependency per case. Do
+   not send generated traffic or credentials to production services; browser DOM/pixel checks need
+   a separate browser E2E harness.
 """
 
 mcp = _Server(name="counterexample", instructions=INSTRUCTIONS)
@@ -82,6 +86,9 @@ async def run_differential_arena(
     oracle_errors: str = "discard",
     seed: int = 0,
     max_failures: int = 1000,
+    import_paths: list[str] | None = None,
+    oracle_fixture_code: str | None = None,
+    candidate_fixture_code: str | None = None,
 ) -> dict[str, Any]:
     """Falsify candidate_code against a ground-truth oracle_code on thousands of adversarial inputs.
 
@@ -100,6 +107,10 @@ async def run_differential_arena(
     - compare_inputs: auto (compare mutated arguments when both return None) | always | never.
     - oracle_errors: discard (inputs the oracle rejects are skipped) | fail (exception behaviour is
       part of the contract, e.g. refactors).
+    - import_paths: explicit local project roots for Python/FastAPI source wrappers. Workers otherwise
+      run isolated. Fixtures are optional Python source with ``before_call(args, kwargs)`` and/or
+      ``after_call(args, kwargs, result, error)`` hooks, one per side, for resetting local state such
+      as an SQLite database, fake HTTP/auth dependency, clock, or random seed per generated case.
     """
     return await _offload(
         arena.run_differential_arena,
@@ -119,6 +130,9 @@ async def run_differential_arena(
         oracle_errors=oracle_errors,
         seed=seed,
         max_failures=max_failures,
+        import_paths=import_paths,
+        oracle_fixture_code=oracle_fixture_code,
+        candidate_fixture_code=candidate_fixture_code,
     )
 
 
@@ -133,6 +147,8 @@ async def run_property_arena(
     property_entrypoint: str = "property",
     seed: int = 0,
     max_failures: int = 1000,
+    import_paths: list[str] | None = None,
+    fixture_code: str | None = None,
 ) -> dict[str, Any]:
     """Falsify a Python invariant or metamorphic relation when no oracle exists.
 
@@ -140,6 +156,8 @@ async def run_property_arena(
     may call symbols from candidate_code on transformed inputs, for example
     ``return result == solve(sorted(values))``. A VERIFIED result means this one supplied
     property held; it is not a proof that the candidate matches an unspecified reference.
+    ``import_paths`` permits importing an in-scope local project, and ``fixture_code`` provides
+    per-case state setup/cleanup hooks for the candidate.
     """
     return await _offload(
         property_engine.run_property_arena,
@@ -152,6 +170,8 @@ async def run_property_arena(
         property_entrypoint=property_entrypoint,
         seed=seed,
         max_failures=max_failures,
+        import_paths=import_paths,
+        fixture_code=fixture_code,
     )
 
 

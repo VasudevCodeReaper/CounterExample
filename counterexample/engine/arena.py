@@ -344,12 +344,22 @@ def run_differential_arena(
     budget_s: float | None = None,
     workers: int | None = None,
     cxx_std: str | None = None,
+    import_paths: list[str] | None = None,
+    oracle_fixture_code: str | None = None,
+    candidate_fixture_code: str | None = None,
 ) -> dict[str, Any]:
     """Falsify ``candidate_code`` against ``oracle_code`` on adversarial inputs.
 
     Returns ``status`` = ``VERIFIED`` (no divergence), ``FALSIFIED`` (with the
     minimal shrunk counterexample, exact output diff and a regression payload),
     ``INCONCLUSIVE`` (every input was rejected by the oracle) or ``ERROR``.
+
+    ``import_paths`` exposes explicit project roots to Python/FastAPI workers
+    despite their isolated interpreter.  Fixtures are optional Python source
+    defining ``before_call(args, kwargs)`` and/or
+    ``after_call(args, kwargs, result, error)``.  Use one fixture per side to
+    reset a local database, fake HTTP/auth dependency, clock, random seed, or
+    other state after every generated case.  Hooks may be async.
     """
     settings = get_settings()
     t_start = time.monotonic()
@@ -367,8 +377,24 @@ def run_differential_arena(
         return _error("oracle_errors must be 'discard' or 'fail'")
 
     try:
-        oracle = make_implementation(oracle_code, role="oracle", language=oracle_language or language, entrypoint=oracle_entrypoint, cxx_std=cxx_std)
-        candidate = make_implementation(candidate_code, role="candidate", language=candidate_language or language, entrypoint=candidate_entrypoint, cxx_std=cxx_std)
+        oracle = make_implementation(
+            oracle_code,
+            role="oracle",
+            language=oracle_language or language,
+            entrypoint=oracle_entrypoint,
+            cxx_std=cxx_std,
+            import_paths=import_paths,
+            fixture_code=oracle_fixture_code,
+        )
+        candidate = make_implementation(
+            candidate_code,
+            role="candidate",
+            language=candidate_language or language,
+            entrypoint=candidate_entrypoint,
+            cxx_std=cxx_std,
+            import_paths=import_paths,
+            fixture_code=candidate_fixture_code,
+        )
     except WorkerError as exc:
         return _error(str(exc), phase="load", details=exc.info)
 
